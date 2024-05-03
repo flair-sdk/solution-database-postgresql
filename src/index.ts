@@ -24,6 +24,7 @@ export type Config = {
   password?: string
   maxRetries?: string | number
   bufferFlushInterval?: string
+  defaultIdField?: string
   fieldMappings?: FieldMapping[]
 }
 
@@ -57,6 +58,10 @@ const definition: SolutionDefinition<Config> = {
 
         const fieldsSql = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
+            if (fieldName === 'entityId') {
+              return `  \`${config.defaultIdField || fieldName}\` STRING`
+            }
+            
             const fieldMapping = config.fieldMappings?.find(
               (mapping) =>
                 (mapping.entityType === '*' ||
