@@ -9,6 +9,12 @@ import {
   SolutionScriptFunction,
 } from 'flair-sdk'
 
+export type FieldMapping = {
+  entityType: string | '*'
+  sourceField: string
+  targetField: string | null
+}
+
 export type Config = {
   schema: string | string[]
   instance?: string
@@ -18,6 +24,7 @@ export type Config = {
   password?: string
   maxRetries?: string | number
   bufferFlushInterval?: string
+  fieldMappings?: FieldMapping[]
 }
 
 const definition: SolutionDefinition<Config> = {
@@ -41,10 +48,27 @@ const definition: SolutionDefinition<Config> = {
         }
 
         const fieldsSql = Object.entries(mergedSchema[entityType])
-          .map(
-            ([fieldName, fieldType]) =>
-              `  \`${fieldName}\` ${getSqlType(fieldType)}`,
-          )
+          .map(([fieldName, fieldType]) => {
+            const fieldMapping = config.fieldMappings?.find(
+              (mapping) =>
+                (mapping.entityType === '*' ||
+                  mapping.entityType === entityType) &&
+                mapping.sourceField === fieldName,
+            )
+
+            if (fieldMapping) {
+              if (!fieldMapping.targetField) {
+                return null
+              }
+
+              return `  \`${fieldMapping.targetField}\` ${getSqlType(
+                fieldType,
+              )}`
+            }
+
+            return `  \`${fieldName}\` ${getSqlType(fieldType)}`
+          })
+          .filter(Boolean)
           .join(',\n')
 
         streamingSql += `
@@ -100,7 +124,8 @@ ${fieldsSql},
   'connector' = 'database',
   'mode' = 'read',
   'namespace' = '{{ namespace }}',
-  'entity-type' = '${entityType}'${timestampField
+  'entity-type' = '${entityType}'${
+          timestampField
             ? `,
   'scan.partition.num' = '10',
   'scan.partition.column' = '${timestampField}',
@@ -108,7 +133,7 @@ ${fieldsSql},
   'scan.partition.upper-bound' = '{{ chrono(toTimestamp | default("now")) }}'
   `
             : ''
-          }
+        }
 );
 
 CREATE TABLE sink_${entityType} (
@@ -147,7 +172,10 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId
       `database/postgresql-${instance}/streaming.sql`,
       streamingSql,
     )
-    context.writeStringFile(`database/postgresql-${instance}/batch.sql`, batchSql)
+    context.writeStringFile(
+      `database/postgresql-${instance}/batch.sql`,
+      batchSql,
+    )
 
     manifest.enrichers.push(
       {
@@ -197,7 +225,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId
         run: async (params?: { autoApprove?: boolean }) => {
           await context.runCommand('util:infer-schema', [
             ...(params?.autoApprove ? ['--auto-approve'] : []),
-          ]);
+          ])
         },
       },
       {
@@ -209,7 +237,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId
             '--skip-hooks',
             '--do-not-exit',
             ...(params?.autoApprove ? ['--auto-approve'] : []),
-          ]);
+          ])
         },
       },
       {
@@ -220,11 +248,11 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId
           await context.runCommand('script', [
             'database-manual-full-sync',
             JSON.stringify(params || {}),
-          ]);
+          ])
         },
       },
-    ];
-  }
+    ]
+  },
 }
 
 export default definition
@@ -233,13 +261,11 @@ async function loadSchema(
   context: SolutionContext<Config>,
   schemas: string | string[],
 ): Promise<Schema> {
-  const arrayedSchemas = Array.isArray(schemas) ? schemas : [schemas];
-  const files = arrayedSchemas.flatMap(
-    (schema) => context.glob(schema),
-  )
+  const arrayedSchemas = Array.isArray(schemas) ? schemas : [schemas]
+  const files = arrayedSchemas.flatMap((schema) => context.glob(schema))
 
   if (!files.length) {
-    console.warn(`No schema files found in: ${arrayedSchemas.join(' ')}`);
+    console.warn(`No schema files found in: ${arrayedSchemas.join(' ')}`)
   }
 
   const mergedSchema: Schema = {}
