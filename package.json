@@ -1,6 +1,6 @@
 {
   "name": "@flair-sdk/solution-database-postgresql",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "Bundled solution to add PostgreSQL database sync to a Flair indexing cluster",
   "type": "module",
