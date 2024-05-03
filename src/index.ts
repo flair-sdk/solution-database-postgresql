@@ -12,9 +12,12 @@ import {
 export type Config = {
   schema: string | string[]
   instance?: string
-  connectionUri: string
-  databaseName: string
-  collectionsPrefix: string
+  connectionUri?: string
+  tableName?: string
+  username?: string
+  password?: string
+  maxRetries?: string | number
+  bufferFlushInterval?: string
 }
 
 const definition: SolutionDefinition<Config> = {
@@ -25,8 +28,6 @@ const definition: SolutionDefinition<Config> = {
 
     for (const entityType in mergedSchema) {
       try {
-        const collectionName = `${config.collectionsPrefix || ''}${entityType}`
-
         if (!mergedSchema[entityType]?.entityId) {
           throw new Error(
             `entityId field is required, but missing for "${entityType}" in "${config.schema}"`,
@@ -61,11 +62,6 @@ ${fieldsSql},
   'scan.startup.mode' = 'timestamp',
   'scan.startup.timestamp-millis' = '{{ chrono("2 hours ago") * 1000 }}'
 );
-
-// connectionUri
-// username
-// password
-// tableName
 
 CREATE TABLE sink_${entityType} (
 ${fieldsSql},
