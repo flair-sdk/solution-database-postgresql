@@ -19,7 +19,7 @@ export type Config = {
   schema: string | string[]
   instance?: string
   connectionUri?: string
-  tableNamePrefix?: string
+  tableNamePrefix?: string | false
   username?: string
   password?: string
   maxRetries?: string | number
@@ -142,7 +142,13 @@ ${fieldsSql},
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
-  'table-name' = '${`${config.tableNamePrefix || 'entity_'}${entityType}`}',
+  'table-name' = '${`${
+    config.tableNamePrefix === undefined ||
+    config.tableNamePrefix === null ||
+    config.tableNamePrefix === false
+      ? ''
+      : 'entity_'
+  }${entityType}`}',
   'username' = '${config.username || 'postgres'}',
   'password' = '${config.password || '{{ secret("postgresql.password") }}'}',
   'sink.max-retries' = '${config.maxRetries || '10'}',
