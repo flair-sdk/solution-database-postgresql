@@ -233,18 +233,13 @@ async function loadSchema(
   context: SolutionContext<Config>,
   schemas: string | string[],
 ): Promise<Schema> {
-  const files = (Array.isArray(schemas) ? schemas : [schemas]).flatMap(
+  const arrayedSchemas = Array.isArray(schemas) ? schemas : [schemas];
+  const files = arrayedSchemas.flatMap(
     (schema) => context.glob(schema),
   )
 
   if (!files.length) {
-    throw new AppError({
-      code: 'SchemaNotFoundError',
-      message: 'No schema files found for define path or pattern(s)',
-      details: {
-        schemas,
-      },
-    })
+    console.warn(`No schema files found in: ${arrayedSchemas.join(' ')}`);
   }
 
   const mergedSchema: Schema = {}
