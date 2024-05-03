@@ -47,6 +47,14 @@ const definition: SolutionDefinition<Config> = {
           )
         }
 
+        const tableName = `${
+          config.tableNamePrefix === undefined ||
+          config.tableNamePrefix === null ||
+          config.tableNamePrefix === false
+            ? ''
+            : 'entity_'
+        }${entityType}`;
+
         const fieldsSql = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
             const fieldMapping = config.fieldMappings?.find(
@@ -93,7 +101,7 @@ ${fieldsSql},
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
-  'table-name' = '${`${config.tableNamePrefix || 'entity_'}${entityType}`}',
+  'table-name' = '${tableName}',
   'username' = '${config.username || 'postgres'}',
   'password' = '${config.password || '{{ secret("postgresql.password") }}'}',
   'sink.max-retries' = '${config.maxRetries || '10'}',
@@ -142,13 +150,7 @@ ${fieldsSql},
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
-  'table-name' = '${`${
-    config.tableNamePrefix === undefined ||
-    config.tableNamePrefix === null ||
-    config.tableNamePrefix === false
-      ? ''
-      : 'entity_'
-  }${entityType}`}',
+  'table-name' = '${tableName}',
   'username' = '${config.username || 'postgres'}',
   'password' = '${config.password || '{{ secret("postgresql.password") }}'}',
   'sink.max-retries' = '${config.maxRetries || '10'}',
