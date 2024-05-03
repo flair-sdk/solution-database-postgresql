@@ -41,7 +41,7 @@ solutions:
       connectionUri: 'jdbc:postgresql://PUT_DB_HOST_HERE/PUT_DB_NAME_HERE'
       username: 'PUT_DB_USERNAME_HERE'
       password: '{{{ postgresqlPassword }}}'
-      tableName: swaps
+      tableNamePrefix: entity_
 ```
 > The "postgresqlPassword" here is a variable that is replaced by mustache locally. Refer to [boilerplate](https://github.com/flair-sdk/starter-boilerplate) repo for more details.
 
