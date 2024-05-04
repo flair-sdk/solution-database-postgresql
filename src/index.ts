@@ -27,10 +27,6 @@ export type Config = {
   fieldMappings?: FieldMapping[]
 }
 
-const RESERVED_KEYWORDS = [
-  'from',
-];
-
 const definition: SolutionDefinition<Config> = {
   prepareManifest: async (context, config, manifest) => {
     const mergedSchema = await loadSchema(context, config.schema)
@@ -103,7 +99,7 @@ const definition: SolutionDefinition<Config> = {
 
         const sinkFieldsSql = fieldsList
           .map(([fieldName, fieldType]) => {
-            return `  \`${escapeKeyword(fieldName)}\` ${getSqlType(fieldType as FieldType)}`
+            return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
           })
           .join(',\n')
 
@@ -125,7 +121,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`${escapeKeyword(idField)}\`) NOT ENFORCED
+  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
@@ -174,7 +170,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`${escapeKeyword(idField)}\`) NOT ENFORCED
+  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
@@ -383,10 +379,3 @@ function getSqlType(fieldType: FieldType) {
       )
   }
 }
-function escapeKeyword(fieldName: string) {
-  if (RESERVED_KEYWORDS.includes(fieldName)) {
-    return `"${fieldName}"`
-  }
-  return fieldName
-}
-
