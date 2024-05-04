@@ -24,7 +24,6 @@ export type Config = {
   password?: string
   maxRetries?: string | number
   bufferFlushInterval?: string
-  defaultIdField?: string
   fieldMappings?: FieldMapping[]
 }
 
@@ -54,42 +53,44 @@ const definition: SolutionDefinition<Config> = {
           config.tableNamePrefix === false
             ? ''
             : 'entity_'
-        }${entityType}`;
+        }${entityType}`
 
-        const fieldsSql = Object.entries(mergedSchema[entityType])
+        const fieldsList = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
-            if (fieldName === 'entityId') {
-              return `  \`${config.defaultIdField || fieldName}\` STRING`
-            }
-            
             const fieldMapping = config.fieldMappings?.find(
               (mapping) =>
                 (mapping.entityType === '*' ||
                   mapping.entityType === entityType) &&
                 mapping.sourceField === fieldName,
             )
-
             if (fieldMapping) {
               if (!fieldMapping.targetField) {
                 return null
               }
-
-              return `  \`${fieldMapping.targetField}\` ${getSqlType(
-                fieldType,
-              )}`
+              return [fieldMapping.targetField, fieldType]
             }
-
-            return `  \`${fieldName}\` ${getSqlType(fieldType)}`
+            return [fieldName, fieldType]
           })
           .filter(Boolean)
-          .join(',\n')
+
+        const sourceFieldsSql = fieldsList
+          .map(([fieldName, fieldType]) => {
+            return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
+          })
+          .join(',\n');
+
+        const sinkFieldsSql = fieldsList
+          .map(([fieldName, fieldType]) => {
+            return `  \`"${fieldName}"\` ${getSqlType(fieldType as FieldType)}`
+          })
+          .join(',\n');
 
         streamingSql += `
 ---
 --- ${entityType}
 ---
 CREATE TABLE source_${entityType} (
-${fieldsSql},
+${sourceFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
   'connector' = 'stream',
@@ -101,7 +102,7 @@ ${fieldsSql},
 );
 
 CREATE TABLE sink_${entityType} (
-${fieldsSql},
+${sinkFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
@@ -131,7 +132,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId
 --- ${entityType}
 ---
 CREATE TABLE source_${entityType} (
-${fieldsSql},
+${sourceFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
   'connector' = 'database',
@@ -150,7 +151,7 @@ ${fieldsSql},
 );
 
 CREATE TABLE sink_${entityType} (
-${fieldsSql},
+${sinkFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
