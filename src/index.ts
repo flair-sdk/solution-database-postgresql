@@ -55,6 +55,8 @@ const definition: SolutionDefinition<Config> = {
             : 'entity_'
         }${entityType}`
 
+        let idField = 'entityId'
+
         const fieldsList = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
             const fieldMapping = config.fieldMappings?.find(
@@ -67,23 +69,26 @@ const definition: SolutionDefinition<Config> = {
               if (!fieldMapping.targetField) {
                 return null
               }
+              if (fieldMapping.sourceField === 'entityId') {
+                idField = fieldMapping.targetField
+              }
               return [fieldMapping.targetField, fieldType]
             }
             return [fieldName, fieldType]
           })
           .filter(Boolean)
 
-        const sourceFieldsSql = fieldsList
+        const sourceFieldsSql = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
             return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
           })
-          .join(',\n');
+          .join(',\n')
 
         const sinkFieldsSql = fieldsList
           .map(([fieldName, fieldType]) => {
             return `  \`"${fieldName}"\` ${getSqlType(fieldType as FieldType)}`
           })
-          .join(',\n');
+          .join(',\n')
 
         streamingSql += `
 ---
@@ -103,7 +108,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`entityId\`) NOT ENFORCED
+  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
@@ -114,7 +119,7 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId IS NOT NULL;
+INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
 `
 
         const fields = Object.entries(mergedSchema[entityType])
@@ -152,7 +157,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`entityId\`) NOT ENFORCED
+  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
@@ -163,7 +168,7 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT * FROM source_${entityType} WHERE entityId IS NOT NULL;
+INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
 `
       } catch (e: any) {
         throw AppError.causedBy(e, {
