@@ -56,6 +56,7 @@ const definition: SolutionDefinition<Config> = {
         }${entityType}`
 
         let idField = 'entityId'
+        const removedFields = []
 
         const fieldsList = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
@@ -67,6 +68,14 @@ const definition: SolutionDefinition<Config> = {
             )
             if (fieldMapping) {
               if (!fieldMapping.targetField) {
+                if (fieldMapping.sourceField === 'entityId') {
+                  throw new Error(
+                    `entityId field cannot be removed as that is primary key for "${entityType}" field mapping: ${JSON.stringify(
+                      fieldMapping,
+                    )}`,
+                  )
+                }
+                removedFields.push(fieldName)
                 return null
               }
               if (fieldMapping.sourceField === 'entityId') {
@@ -80,8 +89,12 @@ const definition: SolutionDefinition<Config> = {
 
         const sourceFieldsSql = Object.entries(mergedSchema[entityType])
           .map(([fieldName, fieldType]) => {
+            if (removedFields.includes(fieldName)) {
+              return null
+            }
             return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
           })
+          .filter(Boolean)
           .join(',\n')
 
         const sinkFieldsSql = fieldsList
