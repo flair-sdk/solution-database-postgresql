@@ -108,7 +108,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
+  PRIMARY KEY (\`"${idField}"\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
@@ -157,7 +157,7 @@ ${sourceFieldsSql},
 
 CREATE TABLE sink_${entityType} (
 ${sinkFieldsSql},
-  PRIMARY KEY (\`${idField}\`) NOT ENFORCED
+  PRIMARY KEY (\`"${idField}"\`) NOT ENFORCED
 ) WITH (
   'connector' = 'jdbc',
   'url' = '${config.connectionUri || '{{ secret("postgresql.uri") }}'}',
