@@ -103,6 +103,16 @@ const definition: SolutionDefinition<Config> = {
           })
           .join(',\n')
 
+          const insertSelectFields = Object.entries(mergedSchema[entityType])
+          .map(([fieldName, fieldType]) => {
+              if (removedFields.includes(fieldName)) {
+                  return null;
+              }
+              return `CAST(\`${fieldName}\` AS ${getSqlType(fieldType)})`;
+          })
+          .filter(Boolean)
+          .join(', \n');
+
         streamingSql += `
 ---
 --- ${entityType}
@@ -132,7 +142,7 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
+INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entityType};
 `
 
         const fields = Object.entries(mergedSchema[entityType])
@@ -181,7 +191,7 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
+INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entityType};
 `
       } catch (e: any) {
         throw AppError.causedBy(e, {
@@ -253,7 +263,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
       {
         for: 'pre-deploy',
         id: 'infer-schema',
-        title: 'infer schema',
+        title: 'infer schema (optional)',
         run: async (params?: { autoApprove?: boolean }) => {
           await context.runCommand('util:infer-schema', [
             ...(params?.autoApprove ? ['--auto-approve'] : []),
@@ -263,7 +273,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
       {
         for: 'pre-deploy',
         id: 'deploy-streaming',
-        title: 'configure real-time sync',
+        title: 'configure real-time sync (optional)',
         run: async (params?: { autoApprove?: boolean }) => {
           await context.runCommand('deploy', [
             '--skip-hooks',
@@ -275,7 +285,7 @@ INSERT INTO sink_${entityType} SELECT * FROM source_${entityType};
       {
         for: 'pre-deploy',
         id: 'postgresql-full-sync',
-        title: 'one-off historical sync for postgresql',
+        title: 'one-off historical sync for postgresql (optional)',
         run: async (params?: { autoApprove?: boolean }) => {
           await context.runCommand('script', [
             'database-manual-full-sync',
