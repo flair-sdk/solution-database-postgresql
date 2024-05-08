@@ -92,7 +92,7 @@ const definition: SolutionDefinition<Config> = {
             if (removedFields.includes(fieldName)) {
               return null
             }
-            return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType, true)}`
+            return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
           })
           .filter(Boolean)
           .join(',\n')
@@ -365,12 +365,12 @@ async function loadSchema(
   return mergedSchema
 }
 
-function getSqlType(fieldType: FieldType, source = false) {
+function getSqlType(fieldType: FieldType) {
   switch (fieldType) {
     case FieldType.STRING:
       return 'STRING'
     case FieldType.INT256:
-      return source ? 'STRING' : 'NUMERIC(78,0)'
+      return 'STRING'
     case FieldType.INT64:
       return 'BIGINT'
     case FieldType.FLOAT8:
