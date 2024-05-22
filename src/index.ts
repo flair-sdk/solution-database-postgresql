@@ -1,4 +1,5 @@
-import { DatabaseSyncEnricherParameters } from './types.js'
+import { Config as DrizzleConfig } from 'drizzle-kit'
+import { PgColumn, PgTable, getTableConfig } from 'drizzle-orm/pg-core'
 import {
   AppError,
   EnricherEngine,
@@ -9,6 +10,8 @@ import {
   SolutionScriptFunction,
 } from 'flair-sdk'
 
+import { DatabaseSyncEnricherParameters } from './types.js'
+
 export type FieldMapping = {
   entityType: string | '*'
   sourceField: string
@@ -16,7 +19,7 @@ export type FieldMapping = {
 }
 
 export type Config = {
-  schema: string | string[]
+  schema: string | string[] | { drizzleConfig: string }
   instance?: string
   connectionUri?: string
   tableNamePrefix?: string | false
@@ -29,48 +32,58 @@ export type Config = {
 
 const definition: SolutionDefinition<Config> = {
   prepareManifest: async (context, config, manifest) => {
-    const mergedSchema = await loadSchema(context, config.schema)
+    if (!config.schema || !Array.isArray(config.schema)) {
+      throw new AppError({
+        code: 'InvalidConfigError',
+        message:
+          'in postgresql solution "schema" field must be a string or an array of strings',
+        details: {
+          config,
+        },
+      })
+    }
+
+    const { mergedSchema, entityIdMappings } = await loadSchema(
+      context,
+      config.schema,
+    )
     let streamingSql = `SET 'execution.runtime-mode' = 'STREAMING';`
     let batchSql = `SET 'execution.runtime-mode' = 'BATCH';`
 
-    for (const entityType in mergedSchema) {
+    for (const schemaName in mergedSchema) {
       try {
-        if (!mergedSchema[entityType]?.entityId) {
-          throw new Error(
-            `entityId field is required, but missing for "${entityType}" in "${config.schema}"`,
-          )
-        }
-
-        if (mergedSchema[entityType].entityId !== FieldType.STRING) {
-          throw new Error(
-            `entityId field must be of type STRING, but is of type "${mergedSchema[entityType].entityId}" for "${entityType}" in "${config.schema}"`,
-          )
-        }
-
-        const tableName = `${
+        const prefix =
           config.tableNamePrefix === undefined ||
           config.tableNamePrefix === null ||
           config.tableNamePrefix === false
             ? ''
-            : 'entity_'
-        }${entityType}`
+            : config.tableNamePrefix || 'entity_'
 
-        let idField = 'entityId'
+        const entityType = schemaName.startsWith(prefix)
+          ? schemaName.slice(prefix.length)
+          : schemaName
+        const tableName = schemaName.startsWith(prefix)
+          ? schemaName
+          : `${prefix}${schemaName}`
+
+        let idField = entityIdMappings[schemaName] ?? 'entityId'
         const removedFields = []
 
-        const fieldsList = Object.entries(mergedSchema[entityType])
+        const fieldsList = Object.entries(mergedSchema[schemaName])
           .map(([fieldName, fieldType]) => {
-            const fieldMapping = config.fieldMappings?.find(
-              (mapping) =>
-                (mapping.entityType === '*' ||
-                  mapping.entityType === entityType) &&
-                mapping.sourceField === fieldName,
-            )
+            const fieldMapping =
+              config.fieldMappings?.find(
+                (mapping) =>
+                  (mapping.entityType === '*' ||
+                    mapping.entityType.replace(prefix, '') === entityType) &&
+                  mapping.sourceField === fieldName,
+              );
+
             if (fieldMapping) {
               if (!fieldMapping.targetField) {
                 if (fieldMapping.sourceField === 'entityId') {
                   throw new Error(
-                    `entityId field cannot be removed as that is primary key for "${entityType}" field mapping: ${JSON.stringify(
+                    `entityId field cannot be removed as that is primary key for "${schemaName}" field mapping: ${JSON.stringify(
                       fieldMapping,
                     )}`,
                   )
@@ -87,12 +100,16 @@ const definition: SolutionDefinition<Config> = {
           })
           .filter(Boolean)
 
-        const sourceFieldsSql = Object.entries(mergedSchema[entityType])
+        const sourceFieldsSql = Object.entries(mergedSchema[schemaName])
           .map(([fieldName, fieldType]) => {
             if (removedFields.includes(fieldName)) {
               return null
             }
-            return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
+            if (idField === fieldName) {
+              return `  \`entityId\` ${getSqlType(fieldType as FieldType)}`
+            } else {
+              return `  \`${fieldName}\` ${getSqlType(fieldType as FieldType)}`
+            }
           })
           .filter(Boolean)
           .join(',\n')
@@ -103,21 +120,36 @@ const definition: SolutionDefinition<Config> = {
           })
           .join(',\n')
 
-          const insertSelectFields = Object.entries(mergedSchema[entityType])
+        const insertSelectFields = Object.entries(mergedSchema[schemaName])
           .map(([fieldName, fieldType]) => {
-              if (removedFields.includes(fieldName)) {
-                  return null;
-              }
-              return `CAST(\`${fieldName}\` AS ${getSqlType(fieldType)})`;
+            if (removedFields.includes(fieldName)) {
+              return null
+            }
+            if (idField === fieldName) {
+              return `TRY_CAST(\`entityId\` AS STRING)`
+            } else {
+              return `TRY_CAST(\`${fieldName}\` AS ${getSqlType(fieldType)})`
+            }
           })
           .filter(Boolean)
-          .join(', \n');
+          .join(', \n')
+
+        if (!mergedSchema[schemaName][idField]) {
+          throw new Error(
+            `identifier field '${idField}' is required, but missing for "${schemaName}" in "${config.schema}"`,
+          )
+        }
+        if (mergedSchema[schemaName][idField] !== FieldType.STRING) {
+          throw new Error(
+            `identifier field '${idField}' must be of type STRING, but is of type "${mergedSchema[schemaName][idField]}" for "${schemaName}" in "${config.schema}"`,
+          )
+        }
 
         streamingSql += `
 ---
---- ${entityType}
+--- ${schemaName}
 ---
-CREATE TABLE source_${entityType} (
+CREATE TABLE source_${schemaName} (
 ${sourceFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
@@ -129,7 +161,7 @@ ${sourceFieldsSql},
   'scan.startup.timestamp-millis' = '{{ chrono("2 hours ago") * 1000 }}'
 );
 
-CREATE TABLE sink_${entityType} (
+CREATE TABLE sink_${schemaName} (
 ${sinkFieldsSql},
   PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
@@ -142,10 +174,10 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entityType};
+INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schemaName};
 `
 
-        const fields = Object.entries(mergedSchema[entityType])
+        const fields = Object.entries(mergedSchema[schemaName])
         let timestampField = fields.find(
           ([fieldName, _fieldType]) => fieldName === 'blockTimestamp',
         )?.[0]
@@ -157,9 +189,9 @@ INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entity
 
         batchSql += `
 ---
---- ${entityType}
+--- ${schemaName}
 ---
-CREATE TABLE source_${entityType} (
+CREATE TABLE source_${schemaName} (
 ${sourceFieldsSql},
   PRIMARY KEY (\`entityId\`) NOT ENFORCED
 ) WITH (
@@ -178,7 +210,7 @@ ${sourceFieldsSql},
         }
 );
 
-CREATE TABLE sink_${entityType} (
+CREATE TABLE sink_${schemaName} (
 ${sinkFieldsSql},
   PRIMARY KEY (\`${idField}\`) NOT ENFORCED
 ) WITH (
@@ -191,14 +223,14 @@ ${sinkFieldsSql},
   'sink.buffer-flush.interval' = '${config.bufferFlushInterval || '60s'}'
 );
 
-INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entityType};
+INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schemaName};
 `
       } catch (e: any) {
         throw AppError.causedBy(e, {
           code: 'ManifestPreparationError',
           message: 'Failed to prepare manifest for user-defined entity',
           details: {
-            entityType,
+            schemaName,
           },
         })
       }
@@ -258,18 +290,31 @@ INSERT INTO sink_${entityType} SELECT ${insertSelectFields} FROM source_${entity
       },
     }
   },
-  registerHooks: async (context) => {
+  registerHooks: async (context, config) => {
+    let anyNonDrizzleSchema = false
+    if (typeof config.schema === 'string') {
+      anyNonDrizzleSchema = true
+    } else if (Array.isArray(config.schema)) {
+      anyNonDrizzleSchema = config.schema.some(
+        (schema) => typeof schema === 'string',
+      )
+    }
+
     return [
-      {
-        for: 'pre-deploy',
-        id: 'infer-schema',
-        title: 'infer schema (optional)',
-        run: async (params?: { autoApprove?: boolean }) => {
-          await context.runCommand('util:infer-schema', [
-            ...(params?.autoApprove ? ['--auto-approve'] : []),
-          ])
-        },
-      },
+      ...(anyNonDrizzleSchema
+        ? ([
+            {
+              for: 'pre-deploy',
+              id: 'infer-schema',
+              title: 'infer schema (optional)',
+              run: async (params?: { autoApprove?: boolean }) => {
+                await context.runCommand('util:infer-schema', [
+                  ...(params?.autoApprove ? ['--auto-approve'] : []),
+                ])
+              },
+            },
+          ] as const)
+        : []),
       {
         for: 'pre-deploy',
         id: 'deploy-streaming',
@@ -301,60 +346,59 @@ export default definition
 
 async function loadSchema(
   context: SolutionContext<Config>,
-  schemas: string | string[],
-): Promise<Schema> {
+  schemas: Config['schema'],
+): Promise<{
+  mergedSchema: Schema
+  entityIdMappings: Record<string, string>
+}> {
   const arrayedSchemas = Array.isArray(schemas) ? schemas : [schemas]
-  const files = arrayedSchemas.flatMap((schema) => context.glob(schema))
+  const files: (string | { drizzleConfig: string })[] =
+    arrayedSchemas.flatMap<any>((schema) => {
+      return typeof schema === 'object' ? schema : context.glob(schema)
+    })
 
   if (!files.length) {
     console.warn(`No schema files found in: ${arrayedSchemas.join(' ')}`)
   }
 
   const mergedSchema: Schema = {}
+  const entityIdMappings: Record<string, string> = {}
 
   for (const file of files) {
     try {
-      const schema = await context.readYamlFile<Schema>(file)
-
-      if (!schema || typeof schema !== 'object') {
+      if (typeof file === 'object') {
+        if (file && 'drizzleConfig' in file) {
+          await loadSchemaFromDrizzleConfig(
+            context,
+            file,
+            mergedSchema,
+            entityIdMappings,
+          )
+        } else {
+          throw new AppError({
+            code: 'InvalidSchemaError',
+            message:
+              'Object schema definition must contain a "drizzleConfig" key',
+            details: {
+              file,
+            },
+          })
+        }
+      } else if (typeof file === 'string') {
+        await loadSchemaFromYaml(context, file, mergedSchema)
+      } else {
         throw new AppError({
           code: 'InvalidSchemaError',
-          message: 'Schema must be an object defined in YAML format',
+          message: 'Schema must be a string or object',
           details: {
             file,
           },
         })
       }
-
-      for (const [type, fields] of Object.entries(schema)) {
-        if (!fields || typeof fields !== 'object') {
-          throw new AppError({
-            code: 'InvalidSchemaError',
-            message: 'Fields for entitiy schema must be an object',
-            details: {
-              entityType: type,
-              file,
-            },
-          })
-        }
-
-        if (mergedSchema[type]) {
-          throw new AppError({
-            code: 'DuplicateSchemaError',
-            message: 'Entity type is already defined in another schema',
-            details: {
-              entityType: type,
-              file,
-            },
-          })
-        }
-
-        mergedSchema[type] = fields
-      }
     } catch (e: any) {
       throw AppError.causedBy(e, {
         code: 'SchemaLoadError',
-        message: 'Failed to load schema YAML',
+        message: 'Failed to load schema file',
         details: {
           file,
         },
@@ -362,7 +406,51 @@ async function loadSchema(
     }
   }
 
-  return mergedSchema
+  return { mergedSchema, entityIdMappings }
+}
+
+async function loadSchemaFromYaml(
+  context: SolutionContext<Config>,
+  file: string,
+  mergedSchema: Schema,
+) {
+  const schema = await context.readYamlFile<Schema>(file)
+
+  if (!schema || typeof schema !== 'object') {
+    throw new AppError({
+      code: 'InvalidSchemaError',
+      message: 'Schema must be an object defined in YAML format',
+      details: {
+        file,
+      },
+    })
+  }
+
+  for (const [type, fields] of Object.entries(schema)) {
+    if (!fields || typeof fields !== 'object') {
+      throw new AppError({
+        code: 'InvalidSchemaError',
+        message: 'Fields for entitiy schema must be an object',
+        details: {
+          entityType: type,
+          file,
+        },
+      })
+    }
+
+    if (mergedSchema[type]) {
+      throw new AppError({
+        code: 'DuplicateSchemaError',
+        message: 'Entity type is already defined in another schema',
+        details: {
+          entityType: type,
+          file,
+        },
+      })
+    }
+
+    mergedSchema[type] = fields
+  }
 }
 
 function getSqlType(fieldType: FieldType) {
@@ -386,6 +474,94 @@ function getSqlType(fieldType: FieldType) {
         `Unsupported field type: ${fieldType} select from: ${Object.values(
           FieldType,
         ).join(', ')}`,
+      )
+  }
+}
+
+async function loadSchemaFromDrizzleConfig(
+  context: SolutionContext<Config>,
+  file: { drizzleConfig?: string },
+  mergedSchema: Schema,
+  entityIdMappings: Record<string, string>,
+) {
+  if (!file.drizzleConfig) {
+    throw new AppError({
+      code: 'InvalidSchemaError',
+      message:
+        'Schema object must contain a valid "drizzleConfig" key path to the typescript config file',
+      details: {
+        file,
+      },
+    })
+  }
+
+  const drizzleConfig: DrizzleConfig = (
+    await (context as any).importModule(file.drizzleConfig)
+  ).default.default
+
+  const schemaPaths = Array.isArray(drizzleConfig.schema)
+    ? drizzleConfig.schema
+    : [drizzleConfig.schema]
+  for (const schemaPath of schemaPaths) {
+    const schemaModule = (await (context as any).importModule(
+      schemaPath,
+    )) as Record<string, PgTable>
+    if (!schemaModule || typeof schemaModule !== 'object') {
+      throw new AppError({
+        code: 'InvalidSchemaError',
+        message: 'Schema file path does not look like a typescript module',
+        details: {
+          file,
+        },
+      })
+    }
+
+    for (const [_, table] of Object.entries(schemaModule)) {
+      if (table?.constructor?.name === 'PgTable') {
+        const fields = Object.keys(table as any).filter(
+          (field) => 'name' in table[field] && 'columnType' in table[field],
+        )
+        const cfg = getTableConfig(table)
+        const tableName = cfg.name
+        mergedSchema[tableName] = fields.reduce((acc, field) => {
+          const column = table[field] as PgColumn
+          if (column.primary && column.name !== 'entityId') {
+            entityIdMappings[tableName] = column.name
+          }
+          return {
+            ...acc,
+            [field]: mapPgTypeToFieldType(column),
+          }
+        }, {} as Record<string, FieldType>)
+      }
+    }
+  }
+}
+
+function mapPgTypeToFieldType(column: PgColumn): FieldType {
+  switch (column.columnType) {
+    case 'PgVarchar':
+    case 'PgText':
+    case 'PgJson':
+      return FieldType.STRING
+    case 'PgNumeric':
+      return FieldType.INT256
+    case 'PgDoublePrecision':
+      return FieldType.FLOAT8
+    case 'PgInt':
+    case 'PgInteger':
+    case 'PgSmallInt':
+    case 'PgBigInt53':
+    case 'PgBigInt64':
+    case 'PgReal':
+      return FieldType.INT64
+    case 'PgBoolean':
+      return FieldType.BOOLEAN
+    case 'PgTimestamp':
+      return FieldType.BOOLEAN
+    default:
+      throw new Error(
+        `Field type '${column.columnType}' is not mapped yet, if you need it, ping our engineers`,
       )
   }
 }
