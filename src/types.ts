@@ -3,4 +3,5 @@ export type DatabaseSyncEnricherParameters = {
   fromTimestamp?: string
   toTimestamp?: string
   autoApprove?: boolean
+  logLevel?: string
 }

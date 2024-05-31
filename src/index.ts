@@ -285,6 +285,16 @@ INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schema
               ? ['-p', `toTimestamp='${params.toTimestamp}'`]
               : []),
             ...(params?.autoApprove ? ['--auto-approve'] : []),
+            ...(params?.logLevel ? [`-l ${params?.logLevel}`] : []),
+          ])
+        },
+      },
+      'database-streaming': {
+        run: async (params: DatabaseSyncEnricherParameters) => {
+          await context.runCommand('enricher:trigger', [
+            `database-postgresql-${instance}-streaming`,
+            ...(params?.autoApprove ? ['--auto-approve'] : []),
+            ...(params?.logLevel ? [`-l ${params?.logLevel}`] : []),
           ])
         },
       },
