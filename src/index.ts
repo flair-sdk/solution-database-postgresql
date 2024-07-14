@@ -306,7 +306,7 @@ INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schema
             {
               for: 'pre-deploy',
               id: 'infer-schema',
-              title: 'infer schema (optional)',
+              title: 'infer flink schema (optional)',
               run: async (params?: { autoApprove?: boolean }) => {
                 await context.runCommand('util:infer-schema', [
                   ...(params?.autoApprove ? ['--auto-approve'] : []),
@@ -327,6 +327,16 @@ INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schema
             },
           ] as const)
         : []),
+      {
+        for: 'pre-deploy',
+        id: 'infer-drizzle-schema',
+        title: 'infer drizzle schema (optional)',
+        run: async (params?: { autoApprove?: boolean }) => {
+          await context.runCommand('util:infer-drizzle-schema', [
+            ...(params?.autoApprove ? ['--auto-approve'] : []),
+          ])
+        },
+      },
       {
         for: 'pre-deploy',
         id: 'postgresql-full-sync',
