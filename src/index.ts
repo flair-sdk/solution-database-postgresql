@@ -71,13 +71,12 @@ const definition: SolutionDefinition<Config> = {
 
         const fieldsList = Object.entries(mergedSchema[schemaName])
           .map(([fieldName, fieldType]) => {
-            const fieldMapping =
-              config.fieldMappings?.find(
-                (mapping) =>
-                  (mapping.entityType === '*' ||
-                    mapping.entityType.replace(prefix, '') === entityType) &&
-                  mapping.sourceField === fieldName,
-              );
+            const fieldMapping = config.fieldMappings?.find(
+              (mapping) =>
+                (mapping.entityType === '*' ||
+                  mapping.entityType.replace(prefix, '') === entityType) &&
+                mapping.sourceField === fieldName,
+            )
 
             if (fieldMapping) {
               if (!fieldMapping.targetField) {
