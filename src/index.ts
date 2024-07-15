@@ -343,6 +343,18 @@ INSERT INTO sink_${schemaName} SELECT ${insertSelectFields} FROM source_${schema
                 ]);
               },
             },
+            {
+              for: "pre-deploy",
+              id: "deploy-streaming",
+              title: "configure real-time sync (optional)",
+              run: async (params?: { autoApprove?: boolean }) => {
+                await context.runCommand("deploy", [
+                  "--skip-hooks",
+                  "--do-not-exit",
+                  ...(params?.autoApprove ? ["--auto-approve"] : []),
+                ]);
+              },
+            },
           ] as const)
         : []),
       {
